@@ -1,0 +1,110 @@
+public inherited sharing class ContentDocumentLinkTriggerHandler extends TriggerHandler {
+
+    public static String loopVariable = 'Pass';
+
+    public ContentDocumentLinkTriggerHandler()
+    {
+        System.debug(LoggingLevel.DEBUG,'ContentDocumentLinkTriggerHandler');
+        
+        
+        this.setMaxLoopCount(4);
+        
+        
+        errorOnLoopCountExceeded = false;
+    }
+
+    	public override void beforeInsert(){
+        runBusinessLogic();
+        }
+
+    	public override void afterInsert(){
+        runBusinessLogic();
+        }
+
+    	public override void afterUpdate(){
+        runBusinessLogic();
+        }
+
+    	public override void afterDelete(){
+        runBusinessLogic();
+        }
+    
+    public Boolean runBusinessLogic(){
+        if( loopVariable == 'Pass' ) {
+            System.debug(LoggingLevel.DEBUG, 'ContentDocumentLinkTriggerHandler.runBusinessLogic() - Start');
+            List<ContentDocumentLink> cdls = ( Trigger.new == null) ? Trigger.old : Trigger.new;
+            System.debug(LoggingLevel.DEBUG, 'ContentDocumentLinkTriggerHandler.runBusinessLogic() - size list: ' + cdls.size());
+            Set<Id> parentIds = new Set<Id>();
+            Set<Id> parentIdsNew = new Set<Id>(); //D-22913
+            List<LoadingHeader__c> lhToUpdate = new List<LoadingHeader__c>(); //D-21677 - Rework PMD
+            /*
+            for( ContentDocumentLink cdl : cdls ) {
+                parentIds.add( cdl.LinkedEntityId );
+                if( new Set<String>{'Case','WorkOrder'}.contains(cdl.LinkedEntityId.getSobjectType().getDescribe().getName()) ) { //D-22913
+                    parentIdsNew.add(cdl.LinkedEntityId);
+                }
+            }
+            */
+
+			String loadingHearderPrefix = GlobalSetting__mdt.getInstance('LoadingHearderPrefix').Valore__c;
+			Set<String> lhPrefixId = (!String.isBlank(loadingHearderPrefix)) ? new Set<String>(loadingHearderPrefix.split(';')) : new Set<String>();
+            for( ContentDocumentLink cdl : cdls ) {
+                String prefixId = (cdl.LinkedEntityId != null) ? String.valueOf(cdl.LinkedEntityId).left(3) : '';
+				if( lhPrefixId.contains(prefixId) ) {
+					parentIds.add( cdl.LinkedEntityId );
+				}
+				/*
+                if ( cdl.LinkedEntityId != null && cdl.LinkedEntityId.getSobjectType() == LoadingHeader__c.SObjectType ) {
+                    parentIds.add( cdl.LinkedEntityId );
+                }
+				*/
+                if( new Set<String>{'500','0WO'}.contains(prefixId) ) { 
+                    parentIdsNew.add(cdl.LinkedEntityId);
+                }
+            }
+
+            if (parentIds.isEmpty() && parentIdsNew.isEmpty()) {
+                return false;
+            }
+          
+
+            if (!parentIds.isEmpty()){
+                /*for ( List<LoadingHeader__c> loadingHdrs : [ SELECT Id, ( SELECT Id FROM ContentDocumentLinks LIMIT 1 ) FROM LoadingHeader__c WHERE Id IN :parentIds]){ //WITH SECURITY_ENFORCED] ) {
+                    for ( LoadingHeader__c loadingHdr : loadingHdrs ) {
+                        if(loadingHdr.ContentDocumentLinks.size() > 0){
+                            loadingHdr.Status__c= 'Da Validare';
+                            lhToUpdate.add(loadingHdr); 
+                        }           
+                    }
+                    
+                }
+                */
+                for (Id parentId : parentIds) {
+                    lhToUpdate.add(new LoadingHeader__c(Id = parentId, Status__c = 'Da Validare'));
+                }
+               
+                if(Schema.sObjectType.LoadingHeader__c.isUpdateable()) {
+                    if(!lhToUpdate.isEmpty()){
+                        update lhToUpdate; 
+                    }
+                } 
+                
+               
+            }
+            
+            if( Trigger.isInsert && Trigger.isAfter && !parentIdsNew.isEmpty() ) {
+                List<ContentDocumentLink> updateList = new List<ContentDocumentLink>();
+                for( ContentDocumentLink contentDocumentNote : [ SELECT ContentDocumentId,Id,LinkedEntityId,ShareType,Visibility FROM ContentDocumentLink WHERE LinkedEntityId IN :parentIdsNew AND ContentDocument.FileType = 'SNOTE' AND Visibility <> 'AllUsers' ] ) {
+                    updateList.add( new ContentDocumentLink(Id = contentDocumentNote.Id, Visibility = 'AllUsers') );
+                }
+                if( Schema.sObjectType.ContentDocumentLink.isUpdateable() && !updateList.isEmpty() ) {
+                    loopVariable = 'Skip';
+                    update updateList;
+                }
+            } 
+            
+          
+        }
+        return true;
+    }
+}
